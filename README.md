@@ -4,11 +4,12 @@
 
 # GitHub Conventional Release Bot
 
-> A GitHub App built with [Probot](https://github.com/probot/probot) that creates GitHub Release following [Conventional Commits](http://conventionalcommits.org/)
+> A GitHub App built with [Probot](https://github.com/probot/probot) that creates [GitHub Release](https://help.github.com/articles/about-releases/) following [Conventional Commits](http://conventionalcommits.org/).
 
-## Conventional Commits
+## Usage
 
-The commit message should be structured as follows:
+1. Install and configure the GitHub App: [github.com/apps/conventional-release-bot](https://github.com/apps/conventional-release-bot)
+2. Add commit that message structure should following [Conventional Commits](http://conventionalcommits.org/)
 
 ```
 <type>[optional scope]: <description>
@@ -18,52 +19,56 @@ The commit message should be structured as follows:
 [optional footer]
 ```
 
-The commit contains the following structural elements, to communicate intent to the consumers of your library:
+3. Push commits (or merged PR) to master branch, and then the [GitHub Release](https://help.github.com/articles/about-releases/) will be created
 
-1. **fix**: a commit of the _type_ `fix` patches a bug in your codebase (this correlates with [PATCH](http://semver.org/#summary) in semantic versioning).
-2. **feat**: a commit of the _type_ `feat` introduces a new feature to the codebase (this correlates with [MINOR](http://semver.org/#summary) in semantic versioning).
-3. **BREAKING CHANGE**: a commit that has the text `BREAKING CHANGE:` at the beginning of its optional body or footer section introduces a breaking API change (correlating with [Major](http://semver.org/#summary) in semantic versioning). A breaking change can be part of commits of any _type_. e.g., a `fix:`, `feat:` & `chore:` types would all be valid, in addition to any other _type_.
+![1_luxfee4jnww2lr9_22sdca](https://user-images.githubusercontent.com/559351/34299744-8a5f42da-e75f-11e7-8dcb-5ca9044759b3.png)
 
-A scope may be provided to a commit’s type, to provide additional contextual information and is contained within parenthesis, e.g., `feat(parser):` add ability to parse arrays.
+1. Git tags (based on [SemVer](https://semver.org/))
+2. Release date
+3. Release types: **Bug Fixes**, **New Features** and **BREAKING CHANGES** (follow [Conventional Commits](https://conventionalcommits.org/)'s type)
+4. Commit's scope (follow [Conventional Commits](https://conventionalcommits.org/)'s scope)
+5. Commit's description
+6. Commit's SHA
+7. Commit's author
+8. Diff with last release
 
-Commit _types_ other than `fix:` and `feat:` are allowed, for example [the Angular convention](https://github.com/angular/angular/blob/master/CONTRIBUTING.md#commit) recommends `docs:`, `style:`, `refactor:`, `perf:`, `test:`, `chore:`, but these tags are not mandated by the conventional commits specification.
+## Developer Guide
 
-See more http://conventionalcommits.org/
+Follow the [Configure a GitHub App](https://probot.github.io/docs/development/#configure-a-github-app) section of Probot document to create your GitHub App
 
-## Installation
+### Requirements
 
-```
-# Install dependencies
-npm install
-
-# Run the bot
-npm start
-```
-
-See [docs/deploy.md](docs/deploy.md) if you would like to run your own instance of this app.
+- node >= 8.9.3
+- yarn >= 1.3.2
 
 ### Permissions
 
-![Repository contents Access: Read & Write](https://user-images.githubusercontent.com/559351/34095403-40e42ca2-e40c-11e7-9fe6-eb28864bfc46.png)
+![34095403-40e42ca2-e40c-11e7-9fe6-eb28864bfc46](https://user-images.githubusercontent.com/559351/34300324-79da2bde-e762-11e7-983f-3178dbdef8cf.png)
 
 ### Subscribe to events
 
-![Subscribe to events: Push](https://user-images.githubusercontent.com/559351/34095741-8fbe3a6a-e40d-11e7-923d-e2e959c724ab.png)
+![34095741-8fbe3a6a-e40d-11e7-923d-e2e959c724ab](https://user-images.githubusercontent.com/559351/34300322-76582b32-e762-11e7-8b31-c7afaef50843.png)
 
+### Installation
 
-## Example
+Clone repository:
 
-### Patch Release (Bug Fixes)
+```
+$ git clone https://github.com/hahow/probot-conventional-release.git
+```
 
-![screen shot 2017-12-18 at 14 47 06](https://user-images.githubusercontent.com/559351/34094930-417e2dcc-e40a-11e7-9356-c696f9973725.png)
-![screen shot 2017-12-18 at 14 58 50](https://user-images.githubusercontent.com/559351/34094929-4152e6da-e40a-11e7-9a0f-fdba6c1bfeec.png)
+Install packages:
 
-### Minor Release (New Features)
+```
+$ yarn install
+```
 
-![screen shot 2017-12-18 at 14 25 22](https://user-images.githubusercontent.com/559351/34094933-41cceac0-e40a-11e7-92c0-ece88fb67a9e.png)
-![screen shot 2017-12-18 at 14 26 50](https://user-images.githubusercontent.com/559351/34094931-41a64d52-e40a-11e7-8323-5537c1335477.png)
+Run Probot server:
 
-### Major Release (Breaking Changes)
+```
+$ yarn start
+```
 
-![screen shot 2017-12-18 at 14 59 14](https://user-images.githubusercontent.com/559351/34094935-421b34c8-e40a-11e7-9098-806392f89b06.png)
-![screen shot 2017-12-18 at 14 59 53](https://user-images.githubusercontent.com/559351/34094934-41f31a24-e40a-11e7-8fbd-6cafe18d9337.png)
+### Deployment
+
+You can deploy the app to [Glitch](https://probot.github.io/docs/deployment/#glitch), [Heroku](https://probot.github.io/docs/deployment/#heroku) or [Now](https://probot.github.io/docs/deployment/#now).
