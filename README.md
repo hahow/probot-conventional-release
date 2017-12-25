@@ -4,6 +4,8 @@
 
 # GitHub Conventional Release Bot
 
+[![Build Status](https://travis-ci.org/amowu/probot-conventional-release.svg?branch=master)](https://travis-ci.org/amowu/probot-conventional-release)
+
 > A GitHub App built with [Probot](https://github.com/probot/probot) that creates [GitHub Release](https://help.github.com/articles/about-releases/) following [Conventional Commits](http://conventionalcommits.org/).
 
 ## Usage
