@@ -152,8 +152,6 @@ module.exports = (robot) => {
 
     const conventionalCommitsSinceLatestRelease = _
       .chain(allCommitsSinceLatestRelease)
-      // 因為最後一筆 commit 已經被 merge 了，所以需要先移除掉
-      .dropRight()
       // 透過 conventionalCommitsParser 封裝所有 commits 成為 conventionalCommit 物件
       .map(convertToConventionalCommit)
       // 過濾掉不是 feat、fix 和 BREAKING CHANGE 的 commits
