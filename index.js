@@ -144,6 +144,8 @@ module.exports = (robot) => {
 
     robot.log(`🤖 ${owner}/${repo}：自從最後一次 Release 之後的所有 Commits 一共 ${allCommitsSinceLatestRelease.length} 筆`)
 
+    robot.log(`🤖 ${owner}/${repo}：自從最後一次 Release 之後的所有 Commits：`, allCommitsSinceLatestRelease)
+
     /**
      * Step 2. 將所有 Commits 封裝成 compileReleaseTemplate(context) 的 context 資料結構
      */
