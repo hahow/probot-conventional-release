@@ -11,7 +11,7 @@ const RELEASE_BRANCH = 'master'
 const INITIAL_VERSION = '0.0.0'
 /** GitHub release notes 的 template，使用 Handlebars.js */
 const RELEASE_TEMPLATE = `
-## {{tag}} ({{date}})
+## {{tag}} {{#if date}}({{date}}){{/if}}
 
 {{#if commits.breakingChange}}
 ### :scream: BREAKING CHANGES :bangbang:
@@ -78,10 +78,14 @@ const compileReleaseTemplate = handlebars.compile(RELEASE_TEMPLATE)
  * 這是一個用來處裡自動化 GitHub Release Notes 的 Probot 專案
  *
  * 功能：
- * 當有 PR 被 merge 回 master 或是 commits 被 push 到 master 時，
- * 這個 Probot 機器人就會檢查自從上一次 Release 以來一直到最新的所有 commits，
+ *
+ * 1. 當有 PR 被 merge 回 master 時
+ * 這個 Probot 機器人就會檢查所有 commits，
  * 將其中所有符合 Conventional Commits 規範的 commits 寫進 GitHub Release Notes，
  * 並根據 semver 更新 tag 版本號。
+ *
+ * 2. 當有 merge master 的 PR 被建立時
+ * 這個 Probot 機器人就會將 1 預期會 Release 的內容寫進該 PR 底下的留言
  *
  * @see {@link http://conventionalcommits.org | Conventional Commits}
  * @see {@link https://developer.github.com/apps | GitHub Apps}
@@ -116,8 +120,17 @@ module.exports = (robot) => {
       ref === RELEASE_BRANCH
     )
 
-    if (isMergedIntoMaster === false) {
-      robot.log('This Pull Request is not merged into master branch, exit this process.')
+    const isOpendForMaster = (
+      action === 'opened' &&
+      ref === RELEASE_BRANCH
+    )
+
+    if (isOpendForMaster === false && isMergedIntoMaster === false) {
+      robot.log(`
+        This Pull Request is not opend for master branch,
+        and is not merged into master branch,
+        so exit this process.
+      `)
 
       return
     }
@@ -223,22 +236,41 @@ module.exports = (robot) => {
 
     robot.log(`${owner}/${repo}/pulls/${number} 預計 Release 的內容：`, compiledReleaseBody)
 
-    try {
-      // 建立 Release Notes！🚀
-      await context.github.repos.createRelease({
-        owner,
-        repo,
-        tag_name: nextReleaseTagName,
-        target_commitish: RELEASE_BRANCH,
-        name: nextReleaseTagName,
-        body: compiledReleaseBody,
-        draft: false,
-        prerelease: false
-      })
+    // 如果是 Open PR，則建立 Release 留言
+    if (isOpendForMaster) {
+      try {
+        await context.github.issues.createComment({
+          owner,
+          repo,
+          number,
+          body: compiledReleaseBody
+        })
+  
+        robot.log(`${owner}/${repo}/pulls/${number} Comment 完成 🎉`)
+      } catch (error) {
+        robot.log(`${owner}/${repo}/pulls/${number} Comment 失敗⋯⋯`)
+      }
+    }
 
-      robot.log(`${owner}/${repo}/pulls/${number} Release 完成 🎉`)
-    } catch (error) {
-      robot.log(`${owner}/${repo}/pulls/${number} Release 失敗⋯⋯`)
+    // 如果是 Merge PR，則建立 Release Notes
+    if (isMergedIntoMaster) {
+      try {
+        // 建立 Release Notes！🚀
+        await context.github.repos.createRelease({
+          owner,
+          repo,
+          tag_name: nextReleaseTagName,
+          target_commitish: RELEASE_BRANCH,
+          name: nextReleaseTagName,
+          body: compiledReleaseBody,
+          draft: false,
+          prerelease: false
+        })
+  
+        robot.log(`${owner}/${repo}/pulls/${number} Release 完成 🎉`)
+      } catch (error) {
+        robot.log(`${owner}/${repo}/pulls/${number} Release 失敗⋯⋯`)
+      }
     }
 
     /**

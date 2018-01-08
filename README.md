@@ -45,10 +45,10 @@ Follow the [Configure a GitHub App](https://probot.github.io/docs/development/#c
 
 ### Permissions
 
-- Pull requests Access: **Read-only**
+- Pull requests Access: **Read  & write**
 - Repository contents Access: **Read & write**
 
-![screen shot 2018-01-08 at 12 22 13](https://user-images.githubusercontent.com/559351/34658990-da78d36e-f46e-11e7-972d-29923de0e978.png)
+![screen shot 2018-01-08 at 17 53 42](https://user-images.githubusercontent.com/559351/34665912-f4b93ace-f49c-11e7-8018-1b29693a5578.png)
 
 ### Subscribe to events
 
