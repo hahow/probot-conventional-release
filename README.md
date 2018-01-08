@@ -45,11 +45,16 @@ Follow the [Configure a GitHub App](https://probot.github.io/docs/development/#c
 
 ### Permissions
 
-![34095403-40e42ca2-e40c-11e7-9fe6-eb28864bfc46](https://user-images.githubusercontent.com/559351/34300324-79da2bde-e762-11e7-983f-3178dbdef8cf.png)
+- Pull requests Access: **Read-only**
+- Repository contents Access: **Read & write**
+
+![screen shot 2018-01-08 at 12 22 13](https://user-images.githubusercontent.com/559351/34658990-da78d36e-f46e-11e7-972d-29923de0e978.png)
 
 ### Subscribe to events
 
-![34095741-8fbe3a6a-e40d-11e7-923d-e2e959c724ab](https://user-images.githubusercontent.com/559351/34300322-76582b32-e762-11e7-8b31-c7afaef50843.png)
+- Pull request
+
+![screen shot 2018-01-08 at 12 22 52](https://user-images.githubusercontent.com/559351/34658994-e37ea75e-f46e-11e7-81a6-bc61bfadfab5.png)
 
 ### Installation
 

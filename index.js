@@ -5,8 +5,8 @@ const semver = require('semver')
 
 const convertToConventionalCommit = require('./lib/convertToConventionalCommit')
 
-/** 只有 push 到這個 branch 才會觸發 conventional release */
-const DEFAULT_BRANCH = 'master'
+/** 只有 merge 到這個 branch 的 PR 才會觸發 conventional release */
+const RELEASE_BRANCH = 'master'
 /** 如果 GitHub repository 從來沒有建立過 release tag，可以指定一個初始版號 */
 const INITIAL_VERSION = '0.0.0'
 /** GitHub release notes 的 template，使用 Handlebars.js */
@@ -88,88 +88,112 @@ const compileReleaseTemplate = handlebars.compile(RELEASE_TEMPLATE)
  * @see {@link https://github.com/probot/probot | Probot}
  */
 module.exports = (robot) => {
-  robot.on('push', async (context) => {
-    const ref = _.get(context, 'payload.ref')
-    const repo = _.get(context, 'payload.repository.name')
-    const owner = _.get(context, 'payload.repository.owner.name')
+  robot.on('pull_request', async(context) => {
+    robot.log('pull_request event is trigger!')
 
-    // 只對 push master 的事件執行 conventional release
-    if (ref !== `refs/heads/${DEFAULT_BRANCH}`) {
-      robot.log(`🤖 ${owner}/${repo}：因為本次 merge 的對象是 ${ref} 而不是 ${DEFAULT_BRANCH}，所以不執行 Conventional Release。`)
+    const owner = _.get(context, 'payload.repository.owner.login')
+    const repo = _.get(context, 'payload.repository.name')
+
+    /**
+     * Step 1
+     *
+     * Determine This Pull Request Is Merged Into Master Branch
+     */
+
+    const action = _.get(context, 'payload.action')
+    const merged = _.get(context, 'payload.pull_request.merged')
+    const ref = _.get(context, 'payload.pull_request.base.ref')
+
+    robot.log(`action is ${action}`)
+    robot.log(`merged is ${merged}`)
+    robot.log(`ref is ${ref}`)
+
+    // If the action is "closed" and the merged key is false, the pull request was closed with unmerged commits.
+    // If the action is "closed" and the merged key is true, the pull request was merged.
+    const isMergedIntoMaster = (
+      action === 'closed' &&
+      merged === true &&
+      ref === RELEASE_BRANCH
+    )
+
+    if (isMergedIntoMaster === false) {
+      robot.log('This Pull Request is not merged into master branch, exit this process.')
 
       return
     }
 
-    // 基本上所有 GitHub API 都會需要這些 parameters
-    const defaultParams = {
-      owner,
-      repo
-    }
-
     /**
-     * 整個 Conventional Release 的步驟：
+     * Step 2
      *
-     * Step 1. 取得自從最後一次 Release 之後的所有 Commits
-     * Step 2. 將這些 Commits 封裝成可以支援 Release Template 的格式
-     * Step 3. 建立 GitHub Release Notes
-     */
-
-    /**
-     * 如果最後一次 release 的 tag 不符合 semver，就不會繼續往下執行了，因為也沒辦法算出下一個版號是多少
+     * Get Latest Release Git Tag
      */
 
     const latestReleaseTagName = await getLatestReleaseTagName()
 
     if (semver.valid(latestReleaseTagName) === false) {
-      robot.log(`🤖 ${owner}/${repo}：因為上一次 Release 的 Tag 不符合 Semver，所以放棄接下來的 Release，蓋牌結束這回合。`)
+      robot.log(`${latestReleaseTagName} is not a semver, exit this process.`)
 
       return
     }
 
     /**
-     * Step 1. 取得自從最後一次 Release 之後的所有 Commits
+     * Step 3
+     *
+     * Get All Commits In This Pull Request
      */
 
-    // 一次取 100 筆 commits（GitHub API 的上限）
-    const getCommitsSinceLatestReleaseAsync = getCommitsSince(latestReleaseTagName)({ per_page: 100 })
+    /** The pull request number */
+    const number = _.get(context, 'payload.number')
 
-    // 使用 RxJS 的 expand 的遞迴特性，一次拿完所有分頁的所有 commits
-    // 詳細原理可以參考我的文章 http://blog.amowu.com/2017/12/rxjs-pagination-with-github-api.html
-    const getAllCommitsSinceLatestRelease$ = Rx.Observable
-      .fromPromise(getCommitsSinceLatestReleaseAsync)
+    const getPullRequestCommits = context.github.pullRequests.getCommits({
+      owner,
+      repo,
+      number,
+      // A custom page size up to 100. Default is 30.
+      per_page: 100
+    })
+
+    // 利用 RxJS 的 expand 處理遞迴的特性，一次拿取 GitHub 分頁 API 的所有 commits
+    // @see {@link https://tech.hahow.in/adfd29de1967|如何使用 RxJS 處理分頁 API}
+    const getAllCommits$ = Rx.Observable
+      .fromPromise(getPullRequestCommits)
       .expand(checkNextPage)
       .reduce(concatAllCommits, [])
 
-    const allCommitsSinceLatestRelease = await getAllCommitsSinceLatestRelease$.toPromise()
+    const allCommits = await getAllCommits$.toPromise()
 
-    robot.log(`🤖 ${owner}/${repo}：自從最後一次 Release 之後的所有 Commits 一共 ${allCommitsSinceLatestRelease.length} 筆`)
+    robot.log(`${owner}/${repo}/pulls/${number} has ${allCommits.length} commits`)
 
     /**
-     * Step 2. 將所有 Commits 封裝成 compileReleaseTemplate(context) 的 context 資料結構
+     * Step 4
+     *
+     * Convert GitHub API's Commits To Conventional Commits
      */
 
-    const conventionalCommitsSinceLatestRelease = _
-      .chain(allCommitsSinceLatestRelease)
-      // 透過 conventionalCommitsParser 封裝所有 commits 成為 conventionalCommit 物件
+    const conventionalCommits = _
+      .chain(allCommits)
+      // 透過 conventionalCommitsParser 封裝所有 commits 成 conventionalCommit 物件
       .map(convertToConventionalCommit)
       // 過濾掉不是 feat、fix 和 BREAKING CHANGE 的 commits
       .filter(isReleasableCommit)
-      // 封裝成為 compileReleaseTemplate(context) 的 context 物件
+      // 封裝成 Release Template 的格式
       .groupBy(groupReleasableCommit)
       .value()
 
-    robot.log(`🤖 ${owner}/${repo}：封裝之後的格式長這樣：`, conventionalCommitsSinceLatestRelease)
+    robot.log(`${owner}/${repo}/pulls/${number}/commits -> conventionalCommits:`, conventionalCommits)
 
     /**
-     * Step 3. 建立 GitHub Release Notes
+     * Step 5
+     *
+     * Create GitHub Release Note
      */
 
-    // 根據 commits 的 conventional type 來取得接下來 release 更新的版本類型，
-    // 例：major、minor 或 patch，如果沒有則結束 release
-    const nextReleaseType = getReleaseTypeFactory()(conventionalCommitsSinceLatestRelease)
+    // 根據 commits 的 conventional type 取得接下來 release 更新的 SemVer，
+    // 預期會是 major、minor 或 patch，如果都不是則會結束 conventional release。
+    const nextReleaseType = getSemverTypeFactory()(conventionalCommits)
 
     if (_.isUndefined(nextReleaseType)) {
-      robot.log(`🤖 ${owner}/${repo}：因為這次沒有發現任何可以 Release 的 Commit Type，所以蓋牌結束這回合。`)
+      robot.log(`${owner}/${repo}/pulls/${number} 沒有發現任何可以 Release 的 Commit Type，所以蓋牌結束這回合。`)
 
       return
     }
@@ -177,145 +201,107 @@ module.exports = (robot) => {
     const nextReleaseVersion = semver.inc(latestReleaseTagName, nextReleaseType)
     const nextReleaseTagName = `v${nextReleaseVersion}`
 
-    robot.log(`🤖 ${owner}/${repo}：本次預計 Release 的 Tag：${nextReleaseTagName}`)
+    robot.log(`${owner}/${repo}/pulls/${number} 預計 Release 的 Tag 是 ${nextReleaseTagName}`)
 
     // 用來顯示 Release Notes 的時間，只取日期的部分
     const nextReleaseDate = _
       .chain(context)
-      .get('payload.head_commit.timestamp')
+      .get('payload.pull_request.merged_at')
       .split('T')
       .head()
       .value()
 
-    // 編譯 Release Notes 的內容
+    // 編譯 Release Template 的內容
     const compiledReleaseBody = compileReleaseTemplate({
-      ...defaultParams,
-      commits: conventionalCommitsSinceLatestRelease,
+      owner,
+      repo,
+      commits: conventionalCommits,
       date: nextReleaseDate,
       preTag: latestReleaseTagName,
       tag: nextReleaseTagName
     })
 
-    robot.log(`🤖 ${owner}/${repo}：本次預計 Release 的內容如下：`, compiledReleaseBody)
+    robot.log(`${owner}/${repo}/pulls/${number} 預計 Release 的內容：`, compiledReleaseBody)
 
     try {
       // 建立 Release Notes！🚀
       await context.github.repos.createRelease({
-        ...defaultParams,
+        owner,
+        repo,
         tag_name: nextReleaseTagName,
-        target_commitish: DEFAULT_BRANCH,
+        target_commitish: RELEASE_BRANCH,
         name: nextReleaseTagName,
         body: compiledReleaseBody,
         draft: false,
         prerelease: false
       })
 
-      robot.log(`🤖 ${owner}/${repo}：Release 完成了 🎉`)
+      robot.log(`${owner}/${repo}/pulls/${number} Release 完成 🎉`)
     } catch (error) {
-      robot.log(`🤖 ${owner}/${repo}：不知道為什麼 Release 失敗了⋯⋯。`)
+      robot.log(`${owner}/${repo}/pulls/${number} Release 失敗⋯⋯`)
     }
 
     /**
-     * 取得最後一次 release 的 tag，如果沒有 release 過，否則回傳 "0.0.0"
+     * 取得最後一次 release 的 tag，如果沒有 release 過則回傳 "0.0.0"
      */
     async function getLatestReleaseTagName () {
-      // 因為從來沒 release 過的情況下，
-      // context.github.repos.getLatestRelease 會拋出 Error，
-      // 所以用 try cache 來處理，error 統一回傳 INITIAL_VERSION
+      // 因為在 repo 沒有 release 的情況下，
+      // context.github.repos.getLatestRelease() 會拋出 Error，
+      // 所以用 try cache 來處理，Error 統一回傳 INITIAL_VERSION（預設 0.0.0）
       try {
         const latestRelease = await context.github.repos.getLatestRelease({ owner, repo })
-
         const latestReleaseTagName = _.get(latestRelease, 'data.tag_name')
 
-        robot.log(`🤖 ${owner}/${repo}：最後一次 Release 的 Tag：${latestReleaseTagName}`)
+        robot.log(`${owner}/${repo} 上一次 Release 的 Git Tag ${latestReleaseTagName}`)
 
         return latestReleaseTagName
       } catch (error) {
-        robot.log(`🤖 ${owner}/${repo}：因為找不到最後一次 Release 的資料。所以版本從 ${INITIAL_VERSION} 開始計算。`)
+        robot.log(`${owner}/${repo} 因為找不到上一次 Release 的 Git Tag。所以版本從 ${INITIAL_VERSION} 開始計算。`)
 
         return INITIAL_VERSION
       }
     }
 
-    function getCommitsFactory (initialParams) {
-      return function (params) {
-        return context.github.repos.getCommits({
-          ...defaultParams,
-          ...initialParams,
-          ...params
-        })
-      }
-    }
-
     /**
-     * 指定 tag，取得自從 tag 之後的所有 commits，規則如下：
+     * 如果 GitHub getCommits() API 還有下一頁，
+     * 則繼續使用 getNextPage() API 取得下一頁的 commits，
+     * 反之則回傳 Rx.Observable.empty() 結束 Rx.Observable.expand() 的遞迴計算
      *
-     * 1. 如果是 tag 是 INITIAL_VERSION（ex: 0.0.0），直接使用 getCommits API
-     * 2. 否則一般情況會是使用 getCommits API 搭配 since（從哪個時間點開始取 commits）參數
+     * @param {Object} response context.github.pullRequests.getCommits 的 response
      */
-    function getCommitsSince (tagName) {
-      return async function (params) {
-        if (tagName === INITIAL_VERSION) {
-          return getCommitsFactory()(params)
-        } else {
-          /**
-           * 要拿到最後一次 release commit 的時間有點麻煩，需要經過以下步驟：
-           *
-           * 1. 先拿到這個 repo 的所有 tags
-           * 2. 找出最後一次 release 的 tag commit 的 SHA
-           * 3. 根據這個 SHA 去取得該作者 commit 的時間
-           */
-
-          // 拿到這個 repo 的所有 tags
-          const tags = await context.github.repos.getTags({ owner, repo })
-
-          // 找出最後一次 release 的 tag commit 的 SHA
-          const latestReleaseTagSHA = _
-            .chain(tags)
-            .get('data')
-            .find({ name: tagName })
-            .get('commit.sha')
-            .value()
-
-          robot.log(`🤖 ${owner}/${repo}：最後一次 Release Tag 的 SHA：${latestReleaseTagSHA}`)
-
-          /**
-           * 取得最後一次 release commit 的時間戳
-           */
-
-          const { data: latestReleaseCommit } = await context.github.repos.getCommit({
-            owner,
-            repo,
-            sha: latestReleaseTagSHA
-          })
-
-          const latestReleaseCommitDate = _.get(latestReleaseCommit, 'commit.author.date')
-
-          robot.log(`🤖 ${owner}/${repo}：最後一次 Release 的 Commit 時間：${latestReleaseCommitDate}`)
-
-          // 回傳一個客製化、可以取得自從上一次 release 之後所有 commits 的 GitHub getCommits API
-          return getCommitsFactory({ since: latestReleaseCommitDate })(params)
-        }
-      }
-    }
-
     function checkNextPage (response) {
-      // 如果 getCommits API 還有下一頁，
-      // 繼續使用 getNextPage API 取得下一頁的 commits，
-      // 反之回傳 Rx.Observable.empty() 結束 Rx.Observable.expand() 的遞迴計算
       return context.github.hasNextPage(response)
         ? Rx.Observable.fromPromise(context.github.getNextPage(response))
         : Rx.Observable.empty()
     }
   })
+
+  robot.log('Conventional release bot is on!')
 }
 
 /**
- * @returns {Array} 將 RxJS stream 之中的所有 GitHub getCommits API response.data 組合成一個一維陣列，
+ * 將 RxJS stream 之中所有 GitHub getCommits() API response.data 合併成一個一維陣列，
  * 例如：[...response1.data, ...response2.data, ...response3.data]
+ *
+ * @returns {Array}
  */
 function concatAllCommits (acc, curr) {
   return acc.concat(curr.data)
+}
+
+/**
+ * 判斷 commit 是否屬於 New Feature 或 Bug Fix
+ *
+ * @param {Object} conventionalCommit
+ * @param {Object} conventionalCommit.conventionalCommit
+ * @param {string} conventionalCommit.conventionalCommit.type
+ * @returns {boolean}
+ * @see https://github.com/conventional-changelog-archived-repos/conventional-commits-parser
+ */
+function isFeatureOrBugfix (conventionalCommit) {
+  const commitType = _.get(conventionalCommit, 'conventionalCommit.type')
+
+  return _.includes(['feat', 'fix'], commitType)
 }
 
 /**
@@ -350,14 +336,17 @@ function isBreakingChang (conventionalCommit) {
  * @see https://github.com/conventional-changelog-archived-repos/conventional-commits-parser
  */
 function isReleasableCommit (conventionalCommit) {
-  const isReleasableCommit =
-    _.includes(['feat', 'fix'], _.get(conventionalCommit, 'conventionalCommit.type')) ||
+  const isReleasableCommit = (
+    isFeatureOrBugfix(conventionalCommit) ||
     isBreakingChang(conventionalCommit)
+  )
 
   return isReleasableCommit
 }
 
 /**
+ * 封裝 conventionalCommit 成 Release Template 的格式
+ *
  * @example
  * _.group(
  *   [
@@ -382,9 +371,11 @@ function isReleasableCommit (conventionalCommit) {
  * }
  */
 function groupReleasableCommit (conventionalCommit) {
+  const commitType = _.get(conventionalCommit, 'conventionalCommit.type')
+
   return isBreakingChang(conventionalCommit)
     ? 'breakingChange'
-    : _.get(conventionalCommit, 'conventionalCommit.type')
+    : commitType
 }
 
 /**
@@ -407,7 +398,7 @@ function groupReleasableCommit (conventionalCommit) {
  * getReleaseTypeFactory()({ foo })
  * => undefined
  */
-function getReleaseTypeFactory () {
+function getSemverTypeFactory () {
   return _.cond([
     [_.property('breakingChange'), _.constant('major')],
     [_.property('feat'), _.constant('minor')],
