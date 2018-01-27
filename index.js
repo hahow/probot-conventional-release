@@ -74,6 +74,121 @@ const RELEASE_TEMPLATE = `
  */
 const compileReleaseTemplate = handlebars.compile(RELEASE_TEMPLATE)
 
+const getLatestReleaseTagName = async (context) => {
+  try {
+    const latestRelease = await context.github.repos.getLatestRelease({ owner, repo })
+    const latestReleaseTagName = _.get(latestRelease, 'data.tag_name')
+
+    robot.log(`${owner}/${repo} 上一次 Release 的 Git Tag: ${latestReleaseTagName}`)
+
+    return latestReleaseTagName
+  } catch (error) {
+    robot.log(`${owner}/${repo} 未發現任何 Git Tags。版本從 v${INITIAL_VERSION} 開始計算。`)
+
+    return INITIAL_VERSION
+  }
+}
+
+module.exports = (robot) => {
+  robot.on('push', async(context) => {
+    robot.log('push event is trigger!')
+    
+    const owner = _.get(context, 'payload.repository.owner.name')
+    const repo = _.get(context, 'payload.repository.name')
+    
+    /**
+     * Get Latest Release Git Tag
+     */
+    
+    const latestReleaseTagName = await getLatestReleaseTagName()
+    
+    if (semver.valid(latestReleaseTagName) === false) {
+      robot.log(`${latestReleaseTagName} is not a SemVer, exit this process.`)
+
+      return
+    }
+    
+    /**
+     *
+     */
+    
+    const allCommits = _.get(context, 'payload.commits')
+    
+    robot.log(`${owner}/${repo} has ${allCommits.length} commits`)
+    
+    /**
+     *
+     */
+
+    const conventionalCommits = _
+      .chain(allCommits)
+      // TODO:
+      // params has not a node-github response,
+      // change to push event's payload
+      .map(convertToConventionalCommit)
+      .filter(isReleasableCommit)
+      .groupBy(groupReleasableCommit)
+      .value()
+    
+    // TODO: log releasableCommits.length
+    
+    /**
+     * 
+     */
+    
+    const nextReleaseType = getSemverTypeFactory()(conventionalCommits)
+
+    if (_.isUndefined(nextReleaseType)) {
+      robot.log(`${owner}/${repo} 沒有發現任何可以 Release 的 Commit Type，所以蓋牌結束這回合。`)
+
+      return
+    }
+
+    const nextReleaseVersion = semver.inc(latestReleaseTagName, nextReleaseType)
+    const nextReleaseTagName = `v${nextReleaseVersion}`
+
+    robot.log(`${owner}/${repo} 預計 Release 的 Tag 是 ${nextReleaseTagName}`)
+
+    // 用來顯示 Release Notes 的時間，只取日期的部分
+    const nextReleaseDate = _
+      .chain(context)
+      .get('payload.pull_request.merged_at')
+      .split('T')
+      .head()
+      .value()
+
+    // 編譯 Release Template 的內容
+    const compiledReleaseBody = compileReleaseTemplate({
+      owner,
+      repo,
+      commits: conventionalCommits,
+      date: nextReleaseDate,
+      preTag: latestReleaseTagName,
+      tag: nextReleaseTagName
+    })
+
+    robot.log(`${owner}/${repo} 預計 Release 的內容：`, compiledReleaseBody)
+    
+    try {
+      // 建立 Release Notes！🚀
+      await context.github.repos.createRelease({
+        owner,
+        repo,
+        tag_name: nextReleaseTagName,
+        target_commitish: RELEASE_BRANCH,
+        name: nextReleaseTagName,
+        body: compiledReleaseBody,
+        draft: false,
+        prerelease: false
+      })
+
+      robot.log(`${owner}/${repo} Release 完成 🎉`)
+    } catch (error) {
+      robot.log(`${owner}/${repo} Release 失敗⋯⋯`)
+    }
+  })
+}
+
 /**
  * 這是一個用來處裡自動化 GitHub Release Notes 的 Probot 專案
  *
