@@ -1,8 +1,28 @@
-module.exports = async (context) => {
-  robot.log('pull_request event is trigger!')
+const get = require('lodash/get')
+const Rx = require('rx')
+const semver = require('semver')
 
-  const owner = _.get(context, 'payload.repository.owner.login')
-  const repo = _.get(context, 'payload.repository.name')
+const compileReleaseTemplate = require('../lib/compileReleaseTemplate')
+const convertResToConventionalCommit = require('../lib/convertResToConventionalCommit')
+const convertToReleasableCommits = require('../lib/convertToReleasableCommits')
+const getLatestReleaseTag = require('../lib/getLatestReleaseTag')
+const getSemverType = require('../lib/getSemverType')
+const releasePROpenedTemplate = require('../template/releasePROpenedTemplate')
+
+const defaultConfig = {
+  INITIAL_VERSION: '0.0.0',
+  RELEASE_BRANCH: 'master',
+  RELEASE_TEMPLATE: releasePROpenedTemplate
+}
+
+module.exports = async (context) => {
+  context.log('pull_request event is trigger!')
+
+  // Reads the app configuration from the given YAML file in the .github directory of the repository.
+  const config = await context.config('conventional-release.yml', defaultConfig)
+
+  const owner = get(context, 'payload.repository.owner.login')
+  const repo = get(context, 'payload.repository.name')
 
   /**
    * Step 1
@@ -10,33 +30,13 @@ module.exports = async (context) => {
    * Determine This Pull Request Is Merged Into Master Branch
    */
 
-  const action = _.get(context, 'payload.action')
-  const merged = _.get(context, 'payload.pull_request.merged')
-  const ref = _.get(context, 'payload.pull_request.base.ref')
+  const action = get(context, 'payload.action')
+  const ref = get(context, 'payload.pull_request.base.ref')
 
-  robot.log(`action is ${action}`)
-  robot.log(`merged is ${merged}`)
-  robot.log(`ref is ${ref}`)
+  const isOpendForMaster = (action === 'opened' && ref === config.RELEASE_BRANCH)
 
-  // If the action is "closed" and the merged key is false, the pull request was closed with unmerged commits.
-  // If the action is "closed" and the merged key is true, the pull request was merged.
-  const isMergedIntoMaster = (
-    action === 'closed' &&
-    merged === true &&
-    ref === RELEASE_BRANCH
-  )
-
-  const isOpendForMaster = (
-    action === 'opened' &&
-    ref === RELEASE_BRANCH
-  )
-
-  if (isOpendForMaster === false && isMergedIntoMaster === false) {
-    robot.log(`
-      This Pull Request is not opend for master branch,
-      and is not merged into master branch,
-      so exit this process.
-    `)
+  if (isOpendForMaster === false) {
+    context.log(`This Pull Request is not opend for ${config.RELEASE_BRANCH} branch, exit this process.`)
 
     return
   }
@@ -47,10 +47,14 @@ module.exports = async (context) => {
    * Get Latest Release Git Tag
    */
 
-  const latestReleaseTagName = await getLatestReleaseTagName()
+  const latestReleaseTag = await getLatestReleaseTag(context, {
+    initialVersion: config.INITIAL_VERSION
+  })
 
-  if (semver.valid(latestReleaseTagName) === false) {
-    robot.log(`${latestReleaseTagName} is not a semver, exit this process.`)
+  context.log(`${owner}/${repo} latest GitHub Releases tag is ${latestReleaseTag}`)
+
+  if (semver.valid(latestReleaseTag) === false) {
+    context.log(`${latestReleaseTag} is not a SemVer, exit this process.`)
 
     return
   }
@@ -62,7 +66,7 @@ module.exports = async (context) => {
    */
 
   /** The pull request number */
-  const number = _.get(context, 'payload.number')
+  const number = get(context, 'payload.number')
 
   const getPullRequestCommits = context.github.pullRequests.getCommits({
     owner,
@@ -81,7 +85,11 @@ module.exports = async (context) => {
 
   const allCommits = await getAllCommits$.toPromise()
 
-  robot.log(`${owner}/${repo}/pulls/${number} has ${allCommits.length} commits`)
+  context.log(`${owner}/${repo}/pulls/${number} has ${allCommits.length} commits`)
+
+  console.log(allCommits)
+
+  return
 
   /**
    * Step 4
@@ -89,17 +97,17 @@ module.exports = async (context) => {
    * Convert GitHub API's Commits To Conventional Commits
    */
 
-  const conventionalCommits = _
-    .chain(allCommits)
-    // 透過 conventionalCommitsParser 封裝所有 commits 成 conventionalCommit 物件
-    .map(convertToConventionalCommit)
-    // 過濾掉不是 feat、fix 和 BREAKING CHANGE 的 commits
-    .filter(isReleasableCommit)
-    // 封裝成 Release Template 的格式
-    .groupBy(groupReleasableCommit)
-    .value()
+  const releasableCommits = convertToReleasableCommits(allCommits)
 
-  robot.log(`${owner}/${repo}/pulls/${number}/commits -> conventionalCommits:`, conventionalCommits)
+  if (releasableCommits.length === 0) {
+    context.log(`${owner}/${repo} has not found any releasable commits, exit this process`)
+
+    return
+  }
+
+  context.log(`${owner}/${repo} has ${releasableCommits.length} releasable commits`)
+
+  const templatableCommits = _.groupBy(releasableCommits, getTemplatableCommitType)
 
   /**
    * Step 5
@@ -109,18 +117,12 @@ module.exports = async (context) => {
 
   // 根據 commits 的 conventional type 取得接下來 release 更新的 SemVer，
   // 預期會是 major、minor 或 patch，如果都不是則會結束 conventional release。
-  const nextReleaseType = getSemverTypeFactory()(conventionalCommits)
-
-  if (_.isUndefined(nextReleaseType)) {
-    robot.log(`${owner}/${repo}/pulls/${number} 沒有發現任何可以 Release 的 Commit Type，所以蓋牌結束這回合。`)
-
-    return
-  }
+  const nextReleaseType = getSemverType(templatableCommits)
 
   const nextReleaseVersion = semver.inc(latestReleaseTagName, nextReleaseType)
-  const nextReleaseTagName = `v${nextReleaseVersion}`
+  const nextReleaseTag = `v${nextReleaseVersion}`
 
-  robot.log(`${owner}/${repo}/pulls/${number} 預計 Release 的 Tag 是 ${nextReleaseTagName}`)
+  context.log(`${owner}/${repo} next GitHub Releases tag is ${nextReleaseTag}`)
 
   // 用來顯示 Release Notes 的時間，只取日期的部分
   const nextReleaseDate = _
@@ -131,73 +133,28 @@ module.exports = async (context) => {
     .value()
 
   // 編譯 Release Template 的內容
-  const compiledReleaseBody = compileReleaseTemplate({
+  const compiledReleaseBody = compileReleaseTemplate(config.RELEASE_TEMPLATE)({
     owner,
     repo,
     commits: conventionalCommits,
     date: nextReleaseDate,
-    preTag: latestReleaseTagName,
     tag: nextReleaseTagName
   })
 
-  robot.log(`${owner}/${repo}/pulls/${number} 預計 Release 的內容：`, compiledReleaseBody)
+  context.log(`${owner}/${repo}/pulls/${number} 預計 Release 的內容：`, compiledReleaseBody)
 
   // 如果是 Open PR，則建立 Release 留言
-  if (isOpendForMaster) {
-    try {
-      await context.github.issues.createComment({
-        owner,
-        repo,
-        number,
-        body: compiledReleaseBody
-      })
+  try {
+    await context.github.issues.createComment({
+      owner,
+      repo,
+      number,
+      body: compiledReleaseBody
+    })
 
-      robot.log(`${owner}/${repo}/pulls/${number} Comment 完成 🎉`)
-    } catch (error) {
-      robot.log(`${owner}/${repo}/pulls/${number} Comment 失敗⋯⋯`)
-    }
-  }
-
-  // 如果是 Merge PR，則建立 Release Notes
-  if (isMergedIntoMaster) {
-    try {
-      // 建立 Release Notes！🚀
-      await context.github.repos.createRelease({
-        owner,
-        repo,
-        tag_name: nextReleaseTagName,
-        target_commitish: RELEASE_BRANCH,
-        name: nextReleaseTagName,
-        body: compiledReleaseBody,
-        draft: false,
-        prerelease: false
-      })
-
-      robot.log(`${owner}/${repo}/pulls/${number} Release 完成 🎉`)
-    } catch (error) {
-      robot.log(`${owner}/${repo}/pulls/${number} Release 失敗⋯⋯`)
-    }
-  }
-
-  /**
-   * 取得最後一次 release 的 tag，如果沒有 release 過則回傳 "0.0.0"
-   */
-  async function getLatestReleaseTagName () {
-    // 因為在 repo 沒有 release 的情況下，
-    // context.github.repos.getLatestRelease() 會拋出 Error，
-    // 所以用 try cache 來處理，Error 統一回傳 INITIAL_VERSION（預設 0.0.0）
-    try {
-      const latestRelease = await context.github.repos.getLatestRelease({ owner, repo })
-      const latestReleaseTagName = _.get(latestRelease, 'data.tag_name')
-
-      robot.log(`${owner}/${repo} 上一次 Release 的 Git Tag ${latestReleaseTagName}`)
-
-      return latestReleaseTagName
-    } catch (error) {
-      robot.log(`${owner}/${repo} 因為找不到上一次 Release 的 Git Tag。所以版本從 ${INITIAL_VERSION} 開始計算。`)
-
-      return INITIAL_VERSION
-    }
+    context.log(`${owner}/${repo}/pulls/${number} Comment 完成 🎉`)
+  } catch (error) {
+    context.log(`${owner}/${repo}/pulls/${number} Comment 失敗⋯⋯`)
   }
 
   /**
@@ -212,4 +169,14 @@ module.exports = async (context) => {
       ? Rx.Observable.fromPromise(context.github.getNextPage(response))
       : Rx.Observable.empty()
   }
+}
+
+/**
+ * 將 RxJS stream 之中所有 GitHub getCommits() API response.data 合併成一個一維陣列，
+ * 例如：[...response1.data, ...response2.data, ...response3.data]
+ *
+ * @returns {Array}
+ */
+function concatAllCommits (acc, curr) {
+  return acc.concat(curr.data)
 }

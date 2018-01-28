@@ -2,17 +2,18 @@ const get = require('lodash/get')
 const groupBy = require('lodash/groupBy')
 const moment = require('moment')
 const semver = require('semver')
+
 const compileReleaseTemplate = require('../lib/compileReleaseTemplate')
 const convertToReleasableCommits = require('../lib/convertToReleasableCommits')
 const getLatestReleaseTag = require('../lib/getLatestReleaseTag')
 const getSemverType = require('../lib/getSemverType')
 const getTemplatableCommitType = require('../lib/getTemplatableCommitType')
-const releaseTemplate = require('../template/releaseTemplate')
+const pushedMasterTemplate = require('../template/pushedMasterTemplate')
 
 const defaultConfig = {
   INITIAL_VERSION: '0.0.0',
   RELEASE_BRANCH: 'master',
-  RELEASE_TEMPLATE: releaseTemplate
+  RELEASE_TEMPLATE: pushedMasterTemplate
 }
 
 module.exports = async (context) => {
@@ -28,7 +29,7 @@ module.exports = async (context) => {
   const ref = get(context, 'payload.ref')
 
   if (ref !== `refs/heads/${config.RELEASE_BRANCH}`) {
-    context.log(`${owner}/${repo} pushed branch is not ${config.RELEASE_BRANCH}, exit this process.`)
+    context.log(`${owner}/${repo} pushed branch is ${ref}, not ${config.RELEASE_BRANCH}, exit this process.`)
 
     return
   }
