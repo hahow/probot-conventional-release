@@ -8,6 +8,7 @@ const convertToReleasableCommits = require('../lib/convertToReleasableCommits')
 const getLatestReleaseTag = require('../lib/getLatestReleaseTag')
 const getSemverType = require('../lib/getSemverType')
 const getTemplatableCommitType = require('../lib/getTemplatableCommitType')
+
 const pushedMasterTemplate = require('../template/pushedMasterTemplate')
 
 const defaultConfig = {
@@ -17,13 +18,20 @@ const defaultConfig = {
 }
 
 module.exports = async (context) => {
-  context.log('push event is trigger!')
+  context.log('Push event is trigger!')
 
   // Reads the app configuration from the given YAML file in the .github directory of the repository.
   const config = await context.config('conventional-release.yml', defaultConfig)
 
+  // Prepare basic params for GitHub APIs.
   const owner = get(context, 'payload.repository.owner.name')
   const repo = get(context, 'payload.repository.name')
+
+  /**
+   * Step 1.
+   *
+   * Determine correct branch that commits will pushing.
+   */
 
   // The full Git ref that was pushed. Example: refs/heads/master.
   const ref = get(context, 'payload.ref')
@@ -33,6 +41,12 @@ module.exports = async (context) => {
 
     return
   }
+
+  /**
+   * Step 2.
+   * 
+   * Retrieve Git tag of the previous GitHub Releases, it should be a SemVer.
+   */
 
   const latestReleaseTag = await getLatestReleaseTag(context, {
     initialVersion: config.INITIAL_VERSION
@@ -45,6 +59,12 @@ module.exports = async (context) => {
 
     return
   }
+
+  /**
+   * Step 3.
+   * 
+   * Filter, and convert all commits to releasable format.
+   */
 
   const allCommits = get(context, 'payload.commits')
 
@@ -59,6 +79,12 @@ module.exports = async (context) => {
   }
 
   context.log(`${owner}/${repo} has ${releasableCommits.length} releasable commits`)
+
+  /**
+   * Step 4.
+   * 
+   * Compile releasable commits template, and release it to GitHub Releases.
+   */
 
   const templatableCommits = groupBy(releasableCommits, getTemplatableCommitType)
 
@@ -94,6 +120,6 @@ module.exports = async (context) => {
 
     context.log(`${owner}/${repo} GitHub Releases complete!`)
   } catch (error) {
-    context.log(`${owner}/${repo} GitHub Releases failure...`)
+    context.log(`${owner}/${repo} GitHub Releases fail...`)
   }
 }
