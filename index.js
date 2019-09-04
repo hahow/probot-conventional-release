@@ -95,6 +95,18 @@ module.exports = (robot) => {
   robot.on('pull_request', async(context) => {
     robot.log('pull_request event is trigger!')
 
+    const config = Object.assign(
+      {},
+      {
+        enabled: true,
+      },
+      context.config('probot-conventional-release.yml')
+    );
+
+    if (!config.enabled) {
+      return;
+    }
+
     const owner = _.get(context, 'payload.repository.owner.login')
     const repo = _.get(context, 'payload.repository.name')
 
