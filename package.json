@@ -1,6 +1,6 @@
 {
   "name": "probot-conventional-release",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GitHub App built with Probot that creates GitHub Release following Conventional Commits",
   "author": "Amo Wu <amo260@gmail.com> (https://amowu.com)",
   "license": "MIT",
