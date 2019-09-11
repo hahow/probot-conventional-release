@@ -74,6 +74,10 @@ const RELEASE_TEMPLATE = `
  */
 const compileReleaseTemplate = handlebars.compile(RELEASE_TEMPLATE)
 
+const defaultConfig = {
+  enabled: true,
+};
+
 /**
  * 這是一個用來處裡自動化 GitHub Release Notes 的 Probot 專案
  *
@@ -95,20 +99,25 @@ module.exports = (robot) => {
   robot.on('pull_request', async(context) => {
     robot.log('pull_request event is trigger!')
 
+    const userConfig = context.config('probot-conventional-release.yml');
+
+    robot.log(`userConfig is ${JSON.stringify(userConfig)}`)
+
     const config = Object.assign(
       {},
-      {
-        enabled: true,
-      },
-      context.config('probot-conventional-release.yml')
+      defaultConfig,
+      userConfig,
     );
 
-    if (!config.enabled) {
-      return;
-    }
+    robot.log(`config is ${JSON.stringify(config)}`)
 
     const owner = _.get(context, 'payload.repository.owner.login')
     const repo = _.get(context, 'payload.repository.name')
+
+    if (!config.enabled) {
+      robot.log(`${repo} disabled, skip process`)
+      return;
+    }
 
     /**
      * Step 1
