@@ -99,9 +99,12 @@ module.exports = (robot) => {
   robot.on('pull_request', async(context) => {
     robot.log('pull_request event is trigger!')
 
-    const userConfig = context.config('probot-conventional-release.yml');
+    const userConfig = await context.config('probot-conventional-release.yml');
 
-    robot.log(`userConfig is ${JSON.stringify(userConfig)}`)
+    const owner = _.get(context, 'payload.repository.owner.login')
+    const repo = _.get(context, 'payload.repository.name')
+
+    robot.log(`${repo} userConfig is ${JSON.stringify(userConfig)}`)
 
     const config = Object.assign(
       {},
@@ -109,10 +112,7 @@ module.exports = (robot) => {
       userConfig,
     );
 
-    robot.log(`config is ${JSON.stringify(config)}`)
-
-    const owner = _.get(context, 'payload.repository.owner.login')
-    const repo = _.get(context, 'payload.repository.name')
+    robot.log(`${repo} config is ${JSON.stringify(config)}`)
 
     if (!config.enabled) {
       robot.log(`${repo} disabled, skip process`)
